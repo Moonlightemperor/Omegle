@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect - Chat Room</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="/css/style.css" rel="stylesheet">
+</head>
+
+<body class="app-bg">
+    <div class="ambient-bg" aria-hidden="true">
+        <div class="blob blob-a"></div>
+        <div class="blob blob-b"></div>
+        <div class="blob blob-c"></div>
+    </div>
+
+    <div class="chat-layout">
+    <%- include('partials/header') %>
+    
+    <div class="video-overlay videoblock hidden">
+        <div id="videos" class="videos-stage">
+            <video class="video-player" id="localVideo" autoplay muted playsinline></video>
+            <video class="video-player" id="remoteVideo" autoplay playsinline></video>
+        </div>
+        
+        <div id="controls" class="video-controls">
+            <button class="video-btn" id="cameraButton" title="Toggle Camera" aria-label="Toggle camera" type="button">
+                <i class="fas fa-video"></i>
+            </button>
+            <button class="video-btn video-btn-danger" id="hangup" title="End Call" aria-label="End call" type="button">
+                <i class="fas fa-phone-slash"></i>
+            </button>
+            <button class="video-btn" id="micButton" title="Toggle Microphone" aria-label="Toggle microphone" type="button">
+                <i class="fas fa-microphone"></i>
+            </button>
+        </div>
+    </div>
+    
+    <div id="incoming-call" class="call-modal hidden">
+        <div class="call-card card">
+            <div class="call-head">
+                <div class="call-icon"><i class="fas fa-phone-volume"></i></div>
+                <span class="call-status"><i class="fas fa-circle"></i> Live request</span>
+            </div>
+            <h3>Incoming Video Call</h3>
+            <p><strong>Stranger</strong> wants to connect with you on video.</p>
+            <div class="call-tips">
+                <span><i class="fas fa-user-shield"></i> Stay anonymous</span>
+                <span><i class="fas fa-video"></i> Camera optional</span>
+            </div>
+            <div class="call-actions">
+                <button id="accept-call" class="btn btn-success" type="button">
+                    <i class="fas fa-phone"></i>
+                    <span>Accept</span>
+                </button>
+                <button id="reject-call" class="btn btn-danger" type="button">
+                    <i class="fas fa-xmark"></i>
+                    <span>Reject</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <main class="chat-main app-shell">
+        <section class="chat-window card" id="message-container">
+            <div class="waiting-state nobody">
+                <div class="waiting-icon"><i class="fas fa-comments"></i></div>
+                <h3>Looking for someone to chat with...</h3>
+                <p>Stay ready. You will be connected automatically.</p>
+                <div class="typing-dots" aria-hidden="true">
+                    <span></span><span></span><span></span>
+                </div>
+            </div>
+            <div class="typing-indicator hidden" id="typing-indicator">
+                <i class="fas fa-ellipsis"></i>
+                <span>Stranger is typing...</span>
+            </div>
+        </section>
+    </main>
+    
+    <form id="chatform" class="chat-compose">
+        <div class="app-shell compose-shell">
+            <input type="hidden" id="userid" value="">
+            <div class="input-wrap">
+                <i class="fas fa-message"></i>
+                <textarea id="messagebox" placeholder="Type a message..." rows="1" autocomplete="off"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary icon-only" aria-label="Send message">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </form>
+    <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+        integrity="sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO"
+        crossorigin="anonymous"></script>
+
+    <script>
+            const socket = io();
+            const chatform = document.querySelector("#chatform");
+            const messagebox = document.querySelector("#messagebox");
+            const messagecontainer = document.querySelector("#message-container");
+            const connectionStatus = document.querySelector("#connection-status");
+            const connectionStatusText = connectionStatus.querySelector("span:last-child");
+            const toastContainer = document.querySelector("#toast-container");
+            const cameraButton = document.querySelector("#cameraButton");
+            const micButton = document.querySelector("#micButton");
+            const hangupButton = document.querySelector("#hangup");
+            const nextButton = document.querySelector("#next-btn");
+            const disconnectButton = document.querySelector("#disconnect-btn");
+            const typingIndicator = document.querySelector("#typing-indicator");
+
+            let room;
+            let isTyping = false;
+            let typingTimeoutId = null;
+
+            socket.emit("joinroom");
+
+            socket.on("joined", function (roomname) {
+                room = roomname;
+                document.querySelector(".nobody").classList.add("hidden");
+                typingIndicator.classList.add("hidden");
+                setStatus("Connected", "status-connected");
+            })
+
+            socket.on("searching", function () {
+                room = null;
+                typingIndicator.classList.add("hidden");
+                document.querySelector(".nobody").classList.remove("hidden");
+                setStatus("Searching...", "");
+                showToast("Searching for a new stranger...", "info");
+            })
+
+            socket.on("partnerLeft", function () {
+                room = null;
+                typingIndicator.classList.add("hidden");
+                document.querySelector(".nobody").classList.remove("hidden");
+                showToast("Stranger left. Finding next match...", "warning");
+                setStatus("Searching...", "");
+            })
+
+            socket.on("message", function (message) {
+                receiveMessage(message);
+            })
+
+            function setStatus(label, stateClass) {
+                connectionStatus.classList.remove("status-connected", "status-offline", "status-busy");
+                if (stateClass) connectionStatus.classList.add(stateClass);
+                connectionStatusText.textContent = label;
+            }
+
+            function showToast(message, type = "info", timeout = 2800) {
+                const toast = document.createElement("div");
+                toast.className = `toast toast-${type}`;
+                toast.textContent = message;
+                toastContainer.appendChild(toast);
+                requestAnimationFrame(() => toast.classList.add("show"));
+                setTimeout(() => {
+                    toast.classList.remove("show");
+                    setTimeout(() => toast.remove(), 250);
+                }, timeout);
+            }
+
+            setStatus("Connecting...", "");
+            socket.on("connect", () => setStatus("Connected", "status-connected"));
+            socket.on("disconnect", () => {
+                setStatus("Offline", "status-offline");
+                showToast("Connection lost. Reconnecting...", "warning");
+            });
+
+            chatform.addEventListener("submit", function (event) {
+                event.preventDefault();
+                const trimmedMessage = messagebox.value.trim();
+                if (!trimmedMessage || !room) return;
+                socket.emit("message", { room: room, message: trimmedMessage });
+                socket.emit("stopTyping", { room });
+                attachMessage(trimmedMessage);
+                messagebox.value = "";
+                messagebox.style.height = "auto";
+                isTyping = false;
+            })
+
+            messagebox.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    chatform.requestSubmit();
+                }
+            });
+
+            messagebox.addEventListener("input", () => {
+                messagebox.style.height = "auto";
+                messagebox.style.height = `${Math.min(messagebox.scrollHeight, 120)}px`;
+
+                if (!room) return;
+                const hasText = messagebox.value.trim().length > 0;
+                if (hasText && !isTyping) {
+                    isTyping = true;
+                    socket.emit("typing", { room });
+                }
+
+                if (typingTimeoutId) clearTimeout(typingTimeoutId);
+                typingTimeoutId = setTimeout(() => {
+                    if (isTyping) {
+                        socket.emit("stopTyping", { room });
+                        isTyping = false;
+                    }
+                }, 800);
+            });
+
+            socket.on("typing", () => {
+                if (!room) return;
+                typingIndicator.classList.remove("hidden");
+            });
+
+            socket.on("stopTyping", () => {
+                typingIndicator.classList.add("hidden");
+            });
+
+            function attachMessage(message) {
+                const bubble = document.createElement('article');
+                bubble.className = 'message-row mine message-bubble';
+
+                const bubbleBody = document.createElement('div');
+                bubbleBody.className = 'message';
+
+                const text = document.createElement('p');
+                text.className = 'message-text';
+                text.textContent = message;
+
+                const time = document.createElement('span');
+                time.className = 'message-time';
+                const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                time.textContent = timestamp;
+
+                bubbleBody.appendChild(text);
+                bubbleBody.appendChild(time);
+                bubble.appendChild(bubbleBody);
+
+                const welcomeDiv = document.querySelector('.nobody');
+                if (welcomeDiv) {
+                    welcomeDiv.classList.add('hidden');
+                }
+
+                messagecontainer.appendChild(bubble);
+                messagecontainer.scrollTo({ top: messagecontainer.scrollHeight, behavior: 'smooth' });
+            }
+
+            function receiveMessage(message) {
+                const bubble = document.createElement('article');
+                bubble.className = 'message-row other message-bubble';
+
+                const avatar = document.createElement('span');
+                avatar.className = 'avatar';
+                avatar.innerHTML = '<i class="fas fa-user"></i>';
+
+                const bubbleBody = document.createElement('div');
+                bubbleBody.className = 'message';
+
+                const text = document.createElement('p');
+                text.className = 'message-text';
+                text.textContent = message;
+
+                const time = document.createElement('span');
+                time.className = 'message-time';
+                const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                time.textContent = timestamp;
+
+                bubbleBody.appendChild(text);
+                bubbleBody.appendChild(time);
+                bubble.appendChild(avatar);
+                bubble.appendChild(bubbleBody);
+
+                const welcomeDiv = document.querySelector('.nobody');
+                if (welcomeDiv) {
+                    welcomeDiv.classList.add('hidden');
+                }
+
+                messagecontainer.appendChild(bubble);
+                messagecontainer.scrollTo({ top: messagecontainer.scrollHeight, behavior: 'smooth' });
+            }
+
+            // WEBRTC START  these are imp variables for WebRTC connection and stream handling
+            
+            let localStream;
+            let remoteStream;
+            let peerConnection;
+            let inCall = false;
+            let cameraEnabled = true;
+            let micEnabled = true;
+
+            const rtcSettings = {
+                iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+            };
+
+            const initialize = async () => {
+                socket.on("signalingMessage", handleSignalingMessage);
+
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        audio: true,
+                        video: true
+                    })
+                    document.querySelector("#localVideo").srcObject = localStream;
+                    document.querySelector("#localVideo").style.display = "block";
+                    setMediaButtonState();
+
+                    initiateOffer();
+
+                    inCall = true;
+                }
+                catch (err) {
+                    console.log("Rejected by browser" + err);
+                    showToast("Camera/microphone permission denied.", "error");
+                }
+            }
+
+            function setMediaButtonState() {
+                cameraButton.classList.toggle("video-btn-off", !cameraEnabled);
+                micButton.classList.toggle("video-btn-off", !micEnabled);
+                cameraButton.innerHTML = cameraEnabled ? '<i class="fas fa-video"></i>' : '<i class="fas fa-video-slash"></i>';
+                micButton.innerHTML = micEnabled ? '<i class="fas fa-microphone"></i>' : '<i class="fas fa-microphone-slash"></i>';
+                cameraButton.setAttribute("aria-pressed", String(!cameraEnabled));
+                micButton.setAttribute("aria-pressed", String(!micEnabled));
+            }
+
+            const initiateOffer = async () => {
+                await createPeerConnection();
+                try {
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    socket.emit("signalingMessage", {
+                        room,
+                        message: JSON.stringify({
+                            type: "offer",
+                            offer
+                        })
+                    })
+                }
+                catch (err) {
+                    console.log("error in creating offer" + err);
+                }
+            }
+
+            const createPeerConnection = () => {
+                peerConnection = new RTCPeerConnection(rtcSettings);
+
+                remoteStream = new MediaStream();
+
+                document.querySelector("#remoteVideo").srcObject = remoteStream;
+                document.querySelector("#remoteVideo").style.display = "block";
+                document.querySelector("#localVideo").classList.add("smallFrame");
+
+                localStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, localStream);
+                })
+
+                peerConnection.ontrack = (event) => {
+                    event.streams[0].getTracks().forEach(track => {
+                        remoteStream.addTrack(track);
+                    })
+                }
+
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        console.log("Sending Ice Candidates");
+
+                        socket.emit("signalingMessage", {
+                            room,
+                            message: JSON.stringify({
+                                type: "candidate",
+                                candidate: event.candidate
+                            })
+                        })
+                    }
+                }
+
+                peerConnection.onconnectionstatechange = () => {
+                    const state = peerConnection.connectionState;
+                    if (state === "connected") {
+                        setStatus("In call", "status-busy");
+                        showToast("Video call connected.", "success");
+                    } else if (state === "failed" || state === "disconnected") {
+                        showToast("Call connection interrupted.", "warning");
+                    }
+                }
+            }
+
+            const handleSignalingMessage = async (message) => {
+                const { type, offer, answer, candidate } = JSON.parse(message);
+                if (type === "offer") handleOffer(offer);
+                if (type === "answer") handleAnswer(answer);
+                if (type === "candidate" && peerConnection) {
+                    try { await peerConnection.addIceCandidate(candidate); }
+                    catch (error) {
+                        console.log(error);
+                    }
+                }
+                if (type === "hangup") {
+                    hangup()
+                }
+            }
+
+            const handleOffer = async (offer) => {
+                await createPeerConnection();
+                try {
+                    await peerConnection.setRemoteDescription(offer);
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    socket.emit("signalingMessage", { room, message: JSON.stringify({ type: "answer", answer }) });
+                    inCall = true;
+                }
+                catch (error) {
+                    console.log("failed to handle offer");
+                }
+            }
+
+            const handleAnswer = async (answer) => {
+                try {
+                    await peerConnection.setRemoteDescription(answer);
+                }
+                catch (error) {
+                    console.log("failed to handle answer");
+                }
+            }
+
+
+            document.querySelector("#video-call-btn")
+                .addEventListener("click", function () {
+                    if (!room) {
+                        showToast("Wait for a match before starting a call.", "warning");
+                        return;
+                    }
+                    socket.emit("startVideoCall", { room })
+                    showToast("Calling stranger...", "info");
+                })
+
+            nextButton.addEventListener("click", function () {
+                if (inCall) hangup();
+                socket.emit("skipStranger", { rematch: true });
+            });
+
+            disconnectButton.addEventListener("click", function () {
+                if (inCall) hangup();
+                socket.emit("skipStranger", { rematch: false });
+                room = null;
+                typingIndicator.classList.add("hidden");
+                document.querySelector(".nobody").classList.remove("hidden");
+                setStatus("Disconnected", "status-offline");
+                showToast("Disconnected from current stranger.", "info");
+            });
+
+            socket.on("incomingCall", function () {
+                document.querySelector("#incoming-call").classList.remove("hidden");
+                showToast("Incoming video call request.", "info");
+            })
+
+            socket.on("callAccepted", function () {
+                initialize();
+                document.querySelector(".videoblock").classList.remove("hidden");
+            })
+
+            document.querySelector("#accept-call")
+                .addEventListener("click", function () {
+                    document.querySelector("#incoming-call").classList.add("hidden");
+                    initialize();
+                    document.querySelector(".videoblock").classList.remove("hidden");
+                    socket.emit("acceptCall", { room })
+                    showToast("Call accepted.", "success");
+                })
+
+            document.querySelector("#reject-call")
+                .addEventListener("click", function () {
+                    document.querySelector("#incoming-call").classList.add("hidden");
+                    socket.emit("rejectCall", { room })
+                    showToast("Call rejected.", "warning");
+                })
+
+            socket.on("callRejected", function () {
+                showToast("Call rejected by the other user.", "warning");
+            })
+
+            hangupButton
+                .addEventListener("click", function () {
+                    hangup();
+                })
+
+            cameraButton.addEventListener("click", () => {
+                if (!localStream) return;
+                cameraEnabled = !cameraEnabled;
+                localStream.getVideoTracks().forEach(track => { track.enabled = cameraEnabled; });
+                setMediaButtonState();
+            });
+
+            micButton.addEventListener("click", () => {
+                if (!localStream) return;
+                micEnabled = !micEnabled;
+                localStream.getAudioTracks().forEach(track => { track.enabled = micEnabled; });
+                setMediaButtonState();
+            });
+
+            document.addEventListener("keydown", (event) => {
+                if (event.key === "Escape" && inCall) {
+                    hangup();
+                }
+            });
+
+            function hangup() {
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                    if (localStream) localStream.getTracks().forEach(track => track.stop());
+
+                    document.querySelector(".videoblock").classList.add("hidden");
+                    socket.emit("signalingMessage", { room, message: JSON.stringify({ type: "hangup" }) });
+                    inCall = false;
+                    setStatus("Connected", "status-connected");
+                    showToast("Call ended.", "info");
+                }
+            }
+    </script>
+</body>
+
+</html>
