@@ -4,7 +4,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Connect - Random Video Chat</title>
+  <title>Connect — Random Video Chat with Strangers</title>
+  <meta name="description" content="Connect anonymously with strangers worldwide via instant text and video chat. No sign-up needed. Fast, private, and free.">
+  <meta property="og:title" content="Connect — Random Video Chat">
+  <meta property="og:description" content="Meet new people instantly with anonymous text and video chat. No account required.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="/css/style.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
@@ -22,11 +31,26 @@
         <i class="fas fa-video"></i>
       </div>
 
-      <p class="hero-badge"><i class="fas fa-sparkles"></i> Smart random matching</p>
+      <p class="hero-badge">
+        <i class="fas fa-circle-dot pulse-dot"></i>
+        <span id="user-count">—</span> people online now
+      </p>
       <h1>Connect with new people in seconds</h1>
       <p class="hero-copy">
         A clean, anonymous chat experience designed for fast conversations with text and video.
       </p>
+
+      <!-- Interest Tags -->
+      <div class="interest-section">
+        <label class="interest-label" for="interests-input">
+          <i class="fas fa-tags"></i> Add interests <span class="optional-tag">optional</span>
+        </label>
+        <div class="tag-input-wrap" id="tag-input-wrap">
+          <div class="tags-list" id="tags-list"></div>
+          <input type="text" id="interests-input" placeholder="e.g. music, gaming, movies…" autocomplete="off" maxlength="30">
+        </div>
+        <p class="tag-hint">Press <kbd>Enter</kbd> or <kbd>,</kbd> to add a tag. You'll be matched with people who share your interests.</p>
+      </div>
 
       <div class="feature-list">
         <div class="feature-item">
@@ -52,13 +76,70 @@
         </div>
       </div>
 
-      <a href="/chat" class="btn btn-primary btn-lg">
+      <a href="/chat" class="btn btn-primary btn-lg" id="start-btn">
         <i class="fas fa-comments"></i>
         <span>Start Chatting</span>
       </a>
       <p class="muted-note">By continuing, you agree to basic community guidelines.</p>
     </section>
   </main>
+
+  <!-- Socket.IO for live user count -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+    integrity="sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO"
+    crossorigin="anonymous" defer></script>
+
+  <script>
+    // ── Live user count ──────────────────────────────────────────────────────
+    const socket = io();
+    const userCountEl = document.getElementById('user-count');
+    socket.on('userCount', (count) => {
+      userCountEl.textContent = count.toLocaleString();
+    });
+
+    // ── Interest tag input ────────────────────────────────────────────────────
+    const input = document.getElementById('interests-input');
+    const tagsList = document.getElementById('tags-list');
+    const startBtn = document.getElementById('start-btn');
+    let tags = [];
+
+    function addTag(value) {
+      const tag = value.trim().toLowerCase().replace(/[^a-z0-9 _-]/g, '');
+      if (!tag || tags.includes(tag) || tags.length >= 10) return;
+      tags.push(tag);
+      renderTags();
+    }
+
+    function removeTag(tag) {
+      tags = tags.filter(t => t !== tag);
+      renderTags();
+    }
+
+    function renderTags() {
+      tagsList.innerHTML = '';
+      tags.forEach(tag => {
+        const el = document.createElement('span');
+        el.className = 'tag-chip';
+        el.innerHTML = `${tag} <button type="button" aria-label="Remove ${tag}" onclick="removeTag('${tag}')"><i class="fas fa-xmark"></i></button>`;
+        tagsList.appendChild(el);
+      });
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        addTag(input.value);
+        input.value = '';
+      } else if (e.key === 'Backspace' && input.value === '' && tags.length) {
+        removeTag(tags[tags.length - 1]);
+      }
+    });
+
+    // Store tags in sessionStorage so chat page can pick them up
+    startBtn.addEventListener('click', (e) => {
+      sessionStorage.setItem('connect_interests', JSON.stringify(tags));
+    });
+  </script>
 </body>
 
 </html>
